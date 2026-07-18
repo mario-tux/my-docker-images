@@ -9,11 +9,11 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 RUN echo '#!/bin/sh\n\
-if [ "$PASEO_RELAY_ENABLED" = "true" ]; then\n\
+if [ "$PASEO_SUDO_ENABLED" = "true" ]; then\n\
     echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/paseo-relay\n\
 else\n\
     rm -f /etc/sudoers.d/paseo-relay\n\
-    echo "Sudo non abilitato (PASEO_RELAY_ENABLED non è true)"\n\
+    echo "Sudo non abilitato (PASEO_SUDO_ENABLED non è true)"\n\
 fi\n\
 exec runuser -u '${USERNAME}' -- "$@"' > /usr/local/bin/entrypoint.sh \
     && chmod +x /usr/local/bin/entrypoint.sh
