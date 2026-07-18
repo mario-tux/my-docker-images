@@ -6,8 +6,8 @@ on:
     paths:
       - 'paseo-custom/**'
   schedule:
-    - cron: '0 2 * * *'
-  workflow_dispatch:
+    - cron: '0 2 * * *' # Si attiva automaticamente ogni notte alle 02:00
+  workflow_dispatch: # Ti permette di far partire la build a mano dalla scheda Actions
 
 jobs:
   check-upstream:
@@ -15,32 +15,53 @@ jobs:
     outputs:
       should_build: ${{ steps.compare.outputs.should_build }}
     steps:
-      - name: Ottieni l'ultimo aggiornamento di Paseo ufficiale
-        id: get-upstream
+      - name: Ottieni le ultime versioni di Paseo e di tutti gli agenti
+        id: get-versions
         run: |
-          UPSTREAM_VER=$(curl -s https://api.github.com/repos/getpaseo/paseo/releases/latest | jq -r '.tag_name')
-          if [ "$UPSTREAM_VER" == "null" ] || [ -z "$UPSTREAM_VER" ]; then
-            UPSTREAM_VER=$(curl -s https://api.github.com/repos/getpaseo/paseo/commits/main | jq -r '.sha')
+          # 1. Versione ufficiale di Paseo (da GitHub)
+          PASEO_VER=$(curl -s https://api.github.com/repos/getpaseo/paseo/releases/latest | jq -r '.tag_name')
+          if [ "$PASEO_VER" == "null" ] || [ -z "$PASEO_VER" ]; then
+            PASEO_VER=$(curl -s https://api.github.com/repos/getpaseo/paseo/commits/main | jq -r '.sha')
           fi
-          echo "version=$UPSTREAM_VER" >> $GITHUB_OUTPUT
 
-      - name: Controlla la cache dell'ultima build
+          # 2. Versione di Claude Code (da npm)
+          CLAUDE_VER=$(curl -s https://registry.npmjs.org/@anthropic-ai/claude-code/latest | jq -r '.version')
+
+          # 3. Versione di Codex (da npm)
+          CODEX_VER=$(curl -s https://registry.npmjs.org/@openai/codex/latest | jq -r '.version')
+
+          # 4. Versione di OpenCode (da npm)
+          OPENCODE_VER=$(curl -s https://registry.npmjs.org/opencode-ai/latest | jq -r '.version')
+
+          # 5. Versione di Pi Agent (da npm)
+          PI_VER=$(curl -s https://registry.npmjs.org/@earendil-works/pi-coding-agent/latest | jq -r '.version')
+
+          # Uniamo tutte le versioni in una stringa e creiamo un hash univoco (SHA-256)
+          COMBINED_STR="paseo:$PASEO_VER|claude:$CLAUDE_VER|codex:$CODEX_VER|opencode:$OPENCODE_VER|pi:$PI_VER"
+          VERSION_HASH=$(echo -n "$COMBINED_STR" | sha256sum | cut -d' ' -f1)
+
+          echo "Debug - Stringa Versioni: $COMBINED_STR"
+          echo "Debug - Hash Generato: $VERSION_HASH"
+
+          echo "hash=$VERSION_HASH" >> $GITHUB_OUTPUT
+
+      - name: Controlla la cache delle versioni precedenti
         id: cache-version
         uses: actions/cache@v4
         with:
-          path: .last_upstream_version
-          key: paseo-upstream-${{ steps.get-upstream.outputs.version }}
+          path: .last_deps_hash
+          key: paseo-deps-${{ steps.get-versions.outputs.hash }}
 
       - name: Determina se procedere con la build
         id: compare
         run: |
           if [ "${{ steps.cache-version.outputs.cache-hit }}" == "true" ] && [ "${{ github.event_name }}" == "schedule" ]; then
-            echo "Nessun aggiornamento rilevato nel progetto ufficiale. Salto la build."
+            echo "Nessun aggiornamento rilevato (Paseo e Agenti sono invariati). Salto la build."
             echo "should_build=false" >> $GITHUB_OUTPUT
           else
-            echo "Aggiornamento trovato o trigger manuale/push. Procedo con la build."
+            echo "Rilevato aggiornamento o trigger manuale/push. Procedo con la build."
             echo "should_build=true" >> $GITHUB_OUTPUT
-            echo "${{ steps.get-upstream.outputs.version }}" > .last_upstream_version
+            echo "${{ steps.get-versions.outputs.hash }}" > .last_deps_hash
           fi
 
   build-and-push:
@@ -79,4 +100,3 @@ jobs:
             ghcr.io/${{ env.IMAGE_NAME }}/paseo-custom:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
