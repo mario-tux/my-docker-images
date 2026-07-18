@@ -6,8 +6,8 @@ on:
     paths:
       - 'paseo-custom/**'
   schedule:
-    - cron: '0 2 * * *' # Si attiva automaticamente ogni notte alle 02:00
-  workflow_dispatch: # Ti permette di far partire la build a mano dalla scheda Actions
+    - cron: '0 2 * * *'
+  workflow_dispatch:
 
 jobs:
   check-upstream:
@@ -18,30 +18,18 @@ jobs:
       - name: Ottieni le ultime versioni di Paseo e di tutti gli agenti
         id: get-versions
         run: |
-          # 1. Versione ufficiale di Paseo (da GitHub)
           PASEO_VER=$(curl -s https://api.github.com/repos/getpaseo/paseo/releases/latest | jq -r '.tag_name')
           if [ "$PASEO_VER" == "null" ] || [ -z "$PASEO_VER" ]; then
             PASEO_VER=$(curl -s https://api.github.com/repos/getpaseo/paseo/commits/main | jq -r '.sha')
           fi
 
-          # 2. Versione di Claude Code (da npm)
           CLAUDE_VER=$(curl -s https://registry.npmjs.org/@anthropic-ai/claude-code/latest | jq -r '.version')
-
-          # 3. Versione di Codex (da npm)
           CODEX_VER=$(curl -s https://registry.npmjs.org/@openai/codex/latest | jq -r '.version')
-
-          # 4. Versione di OpenCode (da npm)
           OPENCODE_VER=$(curl -s https://registry.npmjs.org/opencode-ai/latest | jq -r '.version')
-
-          # 5. Versione di Pi Agent (da npm)
           PI_VER=$(curl -s https://registry.npmjs.org/@earendil-works/pi-coding-agent/latest | jq -r '.version')
 
-          # Uniamo tutte le versioni in una stringa e creiamo un hash univoco (SHA-256)
           COMBINED_STR="paseo:$PASEO_VER|claude:$CLAUDE_VER|codex:$CODEX_VER|opencode:$OPENCODE_VER|pi:$PI_VER"
           VERSION_HASH=$(echo -n "$COMBINED_STR" | sha256sum | cut -d' ' -f1)
-
-          echo "Debug - Stringa Versioni: $COMBINED_STR"
-          echo "Debug - Hash Generato: $VERSION_HASH"
 
           echo "hash=$VERSION_HASH" >> $GITHUB_OUTPUT
 
@@ -56,10 +44,8 @@ jobs:
         id: compare
         run: |
           if [ "${{ steps.cache-version.outputs.cache-hit }}" == "true" ] && [ "${{ github.event_name }}" == "schedule" ]; then
-            echo "Nessun aggiornamento rilevato (Paseo e Agenti sono invariati). Salto la build."
             echo "should_build=false" >> $GITHUB_OUTPUT
           else
-            echo "Rilevato aggiornamento o trigger manuale/push. Procedo con la build."
             echo "should_build=true" >> $GITHUB_OUTPUT
             echo "${{ steps.get-versions.outputs.hash }}" > .last_deps_hash
           fi
@@ -86,6 +72,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Estrai il comando di avvio originale di Paseo
+        id: base-info
+        run: |
+          docker pull ghcr.io/getpaseo/paseo:latest
+          ENTRYPOINT_PART=$(docker inspect --format='{{if .Config.Entrypoint}}{{range .Config.Entrypoint}}{{.}} {{end}}{{end}}' ghcr.io/getpaseo/paseo:latest)
+          CMD_PART=$(docker inspect --format='{{if .Config.Cmd}}{{range .Config.Cmd}}{{.}} {{end}}{{end}}' ghcr.io/getpaseo/paseo:latest)
+          COMBINED_CMD=$(echo "$ENTRYPOINT_PART $CMD_PART" | xargs)
+          echo "base_cmd=$COMBINED_CMD" >> $GITHUB_OUTPUT
+
       - name: Converti il nome del repository in minuscolo
         id: repo-name
         run: echo "IMAGE_NAME=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
@@ -96,6 +91,8 @@ jobs:
           context: ./paseo-custom
           file: ./paseo-custom/Dockerfile
           push: true
+          build-args: |
+            BASE_DEFAULT_CMD=${{ steps.base-info.outputs.base_cmd }}
           tags: |
             ghcr.io/${{ env.IMAGE_NAME }}/paseo-custom:latest
           cache-from: type=gha

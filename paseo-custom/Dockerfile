@@ -1,6 +1,7 @@
 FROM ghcr.io/getpaseo/paseo:latest
 
 ARG USERNAME=paseo
+ARG BASE_DEFAULT_CMD
 
 USER root
 
@@ -8,14 +9,18 @@ RUN apt-get update && apt-get install -y \
     sudo \
     && rm -rf /var/lib/apt/lists/*
 
-RUN echo '#!/bin/sh\n\
+RUN printf '#!/bin/sh\n\
 if [ "$PASEO_SUDO_ENABLED" = "true" ]; then\n\
-    echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/paseo-relay\n\
+    echo "%s ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/paseo-relay\n\
 else\n\
     rm -f /etc/sudoers.d/paseo-relay\n\
     echo "Sudo non abilitato (PASEO_SUDO_ENABLED non è true)"\n\
 fi\n\
-exec runuser -u '${USERNAME}' -- "$@"' > /usr/local/bin/entrypoint.sh \
+if [ $# -eq 0 ]; then\n\
+    exec runuser -u %s -- %s\n\
+else\n\
+    exec runuser -u %s -- "$@"\n\
+fi\n' "$USERNAME" "$USERNAME" "$BASE_DEFAULT_CMD" "$USERNAME" > /usr/local/bin/entrypoint.sh \
     && chmod +x /usr/local/bin/entrypoint.sh
 
 RUN npm install -g @anthropic-ai/claude-code \
