@@ -1,0 +1,82 @@
+name: Build Paseo Custom Image
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'paseo-custom/**'
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  check-upstream:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.compare.outputs.should_build }}
+    steps:
+      - name: Ottieni l'ultimo aggiornamento di Paseo ufficiale
+        id: get-upstream
+        run: |
+          UPSTREAM_VER=$(curl -s https://api.github.com/repos/getpaseo/paseo/releases/latest | jq -r '.tag_name')
+          if [ "$UPSTREAM_VER" == "null" ] || [ -z "$UPSTREAM_VER" ]; then
+            UPSTREAM_VER=$(curl -s https://api.github.com/repos/getpaseo/paseo/commits/main | jq -r '.sha')
+          fi
+          echo "version=$UPSTREAM_VER" >> $GITHUB_OUTPUT
+
+      - name: Controlla la cache dell'ultima build
+        id: cache-version
+        uses: actions/cache@v4
+        with:
+          path: .last_upstream_version
+          key: paseo-upstream-${{ steps.get-upstream.outputs.version }}
+
+      - name: Determina se procedere con la build
+        id: compare
+        run: |
+          if [ "${{ steps.cache-version.outputs.cache-hit }}" == "true" ] && [ "${{ github.event_name }}" == "schedule" ]; then
+            echo "Nessun aggiornamento rilevato nel progetto ufficiale. Salto la build."
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          else
+            echo "Aggiornamento trovato o trigger manuale/push. Procedo con la build."
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "${{ steps.get-upstream.outputs.version }}" > .last_upstream_version
+          fi
+
+  build-and-push:
+    needs: check-upstream
+    if: needs.check-upstream.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout del tuo repository
+        uses: actions/checkout@v4
+
+      - name: Configura Docker Buildx
+        uses: actions/setup-buildx-action@v3
+
+      - name: Accedi al Registro di GitHub (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Converti il nome del repository in minuscolo
+        id: repo-name
+        run: echo "IMAGE_NAME=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+      - name: Costruisci e Pubblica l'immagine
+        uses: docker/build-push-action@v6
+        with:
+          context: ./paseo-custom
+          file: ./paseo-custom/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ env.IMAGE_NAME }}/paseo-custom:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
