@@ -18,19 +18,41 @@ jobs:
       - name: Ottieni le ultime versioni di Paseo e di tutti gli agenti
         id: get-versions
         run: |
-          PASEO_VER=$(curl -s https://api.github.com/repos/getpaseo/paseo/releases/latest | jq -r '.tag_name')
-          if [ "$PASEO_VER" == "null" ] || [ -z "$PASEO_VER" ]; then
-            PASEO_VER=$(curl -s https://api.github.com/repos/getpaseo/paseo/commits/main | jq -r '.sha')
+          set -euo pipefail
+
+          # La versione di Paseo viene letta direttamente dal registro GHCR:
+          # il repository GitHub getpaseo/paseo non e' pubblico e le API
+          # releases/commits restituiscono sempre "null".
+          GHCR_TOKEN=$(curl -sf "https://ghcr.io/token?scope=repository:getpaseo/paseo:pull&service=ghcr.io" | jq -r '.token')
+          PASEO_VER=$(curl -sfI \
+            -H "Authorization: Bearer $GHCR_TOKEN" \
+            -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
+            https://ghcr.io/v2/getpaseo/paseo/manifests/latest \
+            | tr -d '\r' | awk 'tolower($1) == "docker-content-digest:" { print $2 }')
+
+          if [ -z "$PASEO_VER" ] || [ "$PASEO_VER" == "null" ]; then
+            echo "::error::Impossibile determinare il digest di ghcr.io/getpaseo/paseo:latest"
+            exit 1
           fi
 
-          CLAUDE_VER=$(curl -s https://registry.npmjs.org/@anthropic-ai/claude-code/latest | jq -r '.version')
-          CODEX_VER=$(curl -s https://registry.npmjs.org/@openai/codex/latest | jq -r '.version')
-          OPENCODE_VER=$(curl -s https://registry.npmjs.org/opencode-ai/latest | jq -r '.version')
-          PI_VER=$(curl -s https://registry.npmjs.org/@earendil-works/pi-coding-agent/latest | jq -r '.version')
+          npm_version() {
+            VER=$(curl -sf "https://registry.npmjs.org/$1/latest" | jq -r '.version')
+            if [ -z "$VER" ] || [ "$VER" == "null" ]; then
+              echo "::error::Impossibile determinare la versione npm di $1" >&2
+              exit 1
+            fi
+            echo "$VER"
+          }
+
+          CLAUDE_VER=$(npm_version '@anthropic-ai/claude-code')
+          CODEX_VER=$(npm_version '@openai/codex')
+          OPENCODE_VER=$(npm_version 'opencode-ai')
+          PI_VER=$(npm_version '@earendil-works/pi-coding-agent')
 
           COMBINED_STR="paseo:$PASEO_VER|claude:$CLAUDE_VER|codex:$CODEX_VER|opencode:$OPENCODE_VER|pi:$PI_VER"
           VERSION_HASH=$(echo -n "$COMBINED_STR" | sha256sum | cut -d' ' -f1)
 
+          echo "Versioni rilevate: $COMBINED_STR"
           echo "hash=$VERSION_HASH" >> $GITHUB_OUTPUT
 
       - name: Controlla la cache delle versioni precedenti
