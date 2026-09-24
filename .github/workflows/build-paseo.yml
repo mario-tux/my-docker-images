@@ -113,6 +113,11 @@ jobs:
           context: ./paseo-custom
           file: ./paseo-custom/Dockerfile
           push: true
+          # Disattiva le attestazioni buildx: rigenerandosi a ogni build
+          # cambierebbero il digest dell'index OCI anche quando i layer sono
+          # identici, facendo ricreare inutilmente il container a watchtower.
+          provenance: false
+          sbom: false
           build-args: |
             BASE_DEFAULT_CMD=${{ steps.base-info.outputs.base_cmd }}
           tags: |
